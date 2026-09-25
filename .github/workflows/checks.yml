@@ -1,0 +1,82 @@
+name: Merge Checks
+on:
+  push:
+  pull_request:
+    types:
+      - opened
+      - reopened
+  workflow_call:
+
+jobs:
+  skipCheck:
+    runs-on: ubuntu-latest
+    outputs:
+      shouldSkip: ${{ steps.skip_check.outputs.should_skip }}
+    steps:
+      - id: skip_check
+        uses: fkirc/skip-duplicate-actions@v5
+        with:
+          concurrent_skipping: "same_content_newer"
+
+  tsc:
+    name: Static Analysis
+    needs: skipCheck
+    if: needs.skipCheck.outputs.shouldSkip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TS Static Analysis
+        run: npx tsc
+
+  eslint:
+    name: Lint
+    needs: skipCheck
+    if: needs.skipCheck.outputs.shouldSkip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npx eslint . --max-warnings 0
+
+  prettier:
+    name: Style Check
+    needs: skipCheck
+    if: needs.skipCheck.outputs.shouldSkip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Prettier
+        run: npx prettier --check .
