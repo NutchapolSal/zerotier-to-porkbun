@@ -1,5 +1,5 @@
 import { config } from "./config.ts"
-import type { PorkbunAuth } from "./pb.ts"
+import type { DnsRecord, PorkbunAuth } from "./pb.ts"
 import {
     createRecord,
     deleteRecord,
@@ -81,6 +81,48 @@ async function write<T>(label: string, call: () => Promise<T>) {
     }
 }
 
+interface Operation {
+    label: string
+    run: () => Promise<unknown>
+}
+
+const deleteOperations = (records: DnsRecord[]): Operation[] =>
+    records.map((r) => ({
+        label: `delete ${r.type} ${r.name} ${r.content}`,
+        run: () => deleteRecord({ domain: zone.domain, id: r.id }, auth),
+    }))
+
+/** report the round, then carry it out unless this is a dry run */
+async function apply(summary: string, operations: Operation[]) {
+    if (config.dryRun) {
+        console.log(`[dry run] ${summary}`)
+        for (const operation of operations) {
+            console.log(`[dry run] ${operation.label}`)
+        }
+        return
+    }
+
+    console.log(summary)
+    for (const operation of operations) {
+        // eslint-disable-next-line no-await-in-loop
+        await write(operation.label, operation.run)
+    }
+}
+
+/**
+ * delete every record we own and stop. the prune ratio guard does not apply,
+ * because removing all of them is the point.
+ */
+export async function wipe() {
+    const live = await retrieveRecords({ domain: zone.domain }, auth)
+    const plan = planChanges(new Map(), live, {
+        ...zone,
+        ttl: config.recordTtl,
+    })
+    const summary = `wiping ${String(plan.managedCount)} records under ${zone.subdomain}.${zone.domain}`
+    await apply(summary, deleteOperations(plan.deletes))
+}
+
 /** converge porkbun onto what the network looks like right now */
 export async function syncOnce() {
     const members = await getNetworkMembers({
@@ -115,7 +157,7 @@ export async function syncOnce() {
 
     // one list, so a dry run reports exactly what a real run will do
     // additions first, so a rename never leaves the name unresolvable
-    const operations: { label: string; run: () => Promise<unknown> }[] = [
+    await apply(summary, [
         ...plan.creates.map((r) => ({
             label: `create ${r.type} ${r.name} ${r.content}`,
             run: () =>
@@ -132,23 +174,6 @@ export async function syncOnce() {
                     auth,
                 ),
         })),
-        ...deletes.map((r) => ({
-            label: `delete ${r.type} ${r.name} ${r.content}`,
-            run: () => deleteRecord({ domain: zone.domain, id: r.id }, auth),
-        })),
-    ]
-
-    if (config.dryRun) {
-        console.log(`[dry run] ${summary}`)
-        for (const operation of operations) {
-            console.log(`[dry run] ${operation.label}`)
-        }
-        return
-    }
-
-    console.log(summary)
-    for (const operation of operations) {
-        // eslint-disable-next-line no-await-in-loop
-        await write(operation.label, operation.run)
-    }
+        ...deleteOperations(deletes),
+    ])
 }

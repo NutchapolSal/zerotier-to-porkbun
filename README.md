@@ -53,6 +53,22 @@ A Porkbun sandbox key pair (`pk1_sb_` / `sk1_sb_`) works against the same API
 and affects nothing real. Note that the sandbox uses an isolated datastore, so
 a domain registered on the live account is not visible to it.
 
+## Removing the records
+
+Setting `SYNC_WIPE=true` deletes every A and AAAA record under the managed
+subdomain and exits without contacting ZeroTier. `PORKBUN_MAX_PRUNE_RATIO` does
+not apply, since removing all of them is the intent, and records outside the
+managed subdomain are left alone.
+
+Combine it with `PORKBUN_DRY_RUN=true` to list what would be deleted first:
+
+```
+SYNC_WIPE=true PORKBUN_DRY_RUN=true node --env-file=.env src/index.ts
+```
+
+Leaving `SYNC_WIPE` set in the environment means every start wipes and exits, so
+unset it afterwards.
+
 ## Development
 
 ```

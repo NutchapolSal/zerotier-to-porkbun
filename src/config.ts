@@ -30,6 +30,8 @@ const envRes = z
 
         SYNC_INTERVAL_SECONDS: z.coerce.number().int().min(30).default(300),
         SYNC_ONCE: z.stringbool().default(false),
+        // delete every record we manage, then exit; skips zerotier entirely
+        SYNC_WIPE: z.stringbool().default(false),
     })
     .safeParse(process.env)
 if (!envRes.success) {
@@ -93,4 +95,5 @@ export const config = {
     dryRun: env.PORKBUN_DRY_RUN,
     syncIntervalSeconds: env.SYNC_INTERVAL_SECONDS,
     syncOnce: env.SYNC_ONCE,
+    wipe: env.SYNC_WIPE,
 }
