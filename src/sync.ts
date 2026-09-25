@@ -40,8 +40,13 @@ export async function preflight() {
  * returns null when the call did not happen; throws to abandon the tick.
  */
 async function write<T>(label: string, call: () => Promise<T>) {
+    const run = async () => {
+        const result = await call()
+        console.log(label)
+        return result
+    }
     try {
-        return await call()
+        return await run()
     } catch (e) {
         if (!(e instanceof PorkbunError)) {
             throw e
@@ -55,7 +60,7 @@ async function write<T>(label: string, call: () => Promise<T>) {
                 console.warn(`rate limited, retrying ${label} in ${wait}s`)
                 await sleep(wait * 1000)
                 // a second failure gives up on the whole tick
-                return await call()
+                return await run()
             }
             case "DUPLICATE_RECORD":
                 console.warn(
@@ -107,47 +112,43 @@ export async function syncOnce() {
     }
 
     const summary = `${String(plan.creates.length)} to create, ${String(plan.edits.length)} to edit, ${String(deletes.length)} to delete, ${String(plan.managedCount)} managed`
+
+    // one list, so a dry run reports exactly what a real run will do
+    // additions first, so a rename never leaves the name unresolvable
+    const operations: { label: string; run: () => Promise<unknown> }[] = [
+        ...plan.creates.map((r) => ({
+            label: `create ${r.type} ${r.name} ${r.content}`,
+            run: () =>
+                createRecord(
+                    { ...r, domain: zone.domain, ttl: config.recordTtl },
+                    auth,
+                ),
+        })),
+        ...plan.edits.map((r) => ({
+            label: `edit ${r.type} ${r.name} ${r.content}`,
+            run: () =>
+                editRecord(
+                    { ...r, domain: zone.domain, ttl: config.recordTtl },
+                    auth,
+                ),
+        })),
+        ...deletes.map((r) => ({
+            label: `delete ${r.type} ${r.name} ${r.content}`,
+            run: () => deleteRecord({ domain: zone.domain, id: r.id }, auth),
+        })),
+    ]
+
     if (config.dryRun) {
         console.log(`[dry run] ${summary}`)
-        for (const r of plan.creates) {
-            console.log(`[dry run] create ${r.type} ${r.name} ${r.content}`)
-        }
-        for (const r of plan.edits) {
-            console.log(`[dry run] edit ${r.type} ${r.name} ${r.content}`)
-        }
-        for (const r of deletes) {
-            console.log(`[dry run] delete ${r.type} ${r.name} ${r.content}`)
+        for (const operation of operations) {
+            console.log(`[dry run] ${operation.label}`)
         }
         return
     }
-    console.log(summary)
 
-    // additions first, so a rename never leaves the name unresolvable
-    for (const r of plan.creates) {
-        const label = `create ${r.type} ${r.name} ${r.content}`
+    console.log(summary)
+    for (const operation of operations) {
         // eslint-disable-next-line no-await-in-loop
-        await write(label, () =>
-            createRecord(
-                { ...r, domain: zone.domain, ttl: config.recordTtl },
-                auth,
-            ),
-        )
-    }
-    for (const r of plan.edits) {
-        const label = `edit ${r.type} ${r.name} ${r.content}`
-        // eslint-disable-next-line no-await-in-loop
-        await write(label, () =>
-            editRecord(
-                { ...r, domain: zone.domain, ttl: config.recordTtl },
-                auth,
-            ),
-        )
-    }
-    for (const r of deletes) {
-        const label = `delete ${r.type} ${r.name} ${r.content}`
-        // eslint-disable-next-line no-await-in-loop
-        await write(label, () =>
-            deleteRecord({ domain: zone.domain, id: r.id }, auth),
-        )
+        await write(operation.label, operation.run)
     }
 }
