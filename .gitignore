@@ -105,3 +105,5 @@ dist
 
 # scratch pad file
 scratchpad.ts
+# local api reference, not vendored
+porkbun-openapi.json
