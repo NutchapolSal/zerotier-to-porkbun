@@ -1,4 +1,5 @@
 {
+  "name": "zerotier-to-porkbun",
   "dependencies": {
     "zod": "^4.6.5"
   },

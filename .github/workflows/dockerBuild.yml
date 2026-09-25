@@ -31,7 +31,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ghcr.io/nutchapolsal/discord-zerotier-dashboard
+            ghcr.io/nutchapolsal/zerotier-to-porkbun
           tags: |
             type=sha
             type=ref,event=branch
@@ -47,5 +47,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/nutchapolsal/discord-zerotier-dashboard:buildcache
-          cache-to: type=registry,ref=ghcr.io/nutchapolsal/discord-zerotier-dashboard:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/nutchapolsal/zerotier-to-porkbun:buildcache
+          cache-to: type=registry,ref=ghcr.io/nutchapolsal/zerotier-to-porkbun:buildcache,mode=max
