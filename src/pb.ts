@@ -126,7 +126,8 @@ export async function ping(auth: PorkbunAuth) {
 }
 
 const dnsRecordSchema = z.object({
-    id: z.string(),
+    // the live api answers with a number here, the spec says string
+    id: z.coerce.string(),
     // fully qualified on read, unlike the bare subdomain writes take
     name: z.string(),
     type: z.string(),
@@ -152,7 +153,7 @@ export async function retrieveRecords(
 
 const createSchema = z.object({
     status: z.literal("SUCCESS"),
-    id: z.string(),
+    id: z.coerce.string(),
 })
 
 export async function createRecord(
