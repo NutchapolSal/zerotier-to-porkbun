@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "lint": "eslint . --fix && prettier . --write",
-    "test": "jest"
+    "test": "node --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
