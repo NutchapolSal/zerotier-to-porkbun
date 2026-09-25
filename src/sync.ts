@@ -1,0 +1,153 @@
+import { config } from "./config.ts"
+import type { PorkbunAuth } from "./pb.ts"
+import {
+    createRecord,
+    deleteRecord,
+    editRecord,
+    ping,
+    PorkbunError,
+    retrieveRecords,
+} from "./pb.ts"
+import { buildDesiredRecords, planChanges } from "./records.ts"
+import { getNetworkMembers } from "./zt.ts"
+
+const MAX_RATE_LIMIT_WAIT_SECONDS = 300
+
+export const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms))
+
+const auth: PorkbunAuth = {
+    apiKey: config.porkbunApiKey,
+    secretApiKey: config.porkbunSecretApiKey,
+    useIpv4Endpoint: config.useIpv4Endpoint,
+}
+
+const zone = {
+    domain: config.porkbunDomain,
+    subdomain: config.porkbunSubdomain,
+}
+
+/** fail fast on bad credentials instead of on the first sync */
+export async function preflight() {
+    const res = await ping(auth)
+    console.log(
+        `porkbun credentials ok, api sees us as ${res.yourIp ?? "unknown"}`,
+    )
+}
+
+/**
+ * one write, with the porkbun failures that are worth surviving handled.
+ * returns null when the call did not happen; throws to abandon the tick.
+ */
+async function write<T>(label: string, call: () => Promise<T>) {
+    try {
+        return await call()
+    } catch (e) {
+        if (!(e instanceof PorkbunError)) {
+            throw e
+        }
+        switch (e.code) {
+            case "RATE_LIMIT_EXCEEDED": {
+                const wait = Math.min(
+                    e.retryAfterSeconds ?? 30,
+                    MAX_RATE_LIMIT_WAIT_SECONDS,
+                )
+                console.warn(`rate limited, retrying ${label} in ${wait}s`)
+                await sleep(wait * 1000)
+                // a second failure gives up on the whole tick
+                return await call()
+            }
+            case "DUPLICATE_RECORD":
+                console.warn(
+                    `${label}: already exists as ${e.existingId ?? "?"}, adopting it`,
+                )
+                return null
+            case "RECORD_CONFLICT":
+                console.error(
+                    `${label}: blocked by another record, clear it by hand: ${JSON.stringify(e.conflictingRecords)}`,
+                )
+                return null
+            case "ZONE_RECORD_LIMIT":
+                throw e
+            default:
+                console.error(`${label}: ${e.message}`)
+                return null
+        }
+    }
+}
+
+/** converge porkbun onto what the network looks like right now */
+export async function syncOnce() {
+    const members = await getNetworkMembers({
+        networkId: config.zerotierNetworkId,
+        token: config.zerotierToken,
+    })
+    const desired = buildDesiredRecords(members, {
+        ...zone,
+        wildcard: config.wildcard,
+    })
+    if (desired.size == 0) {
+        console.error(
+            "no authorized members with addresses; skipping this round rather than emptying the zone",
+        )
+        return
+    }
+
+    const live = await retrieveRecords({ domain: zone.domain }, auth)
+    const plan = planChanges(desired, live, { ...zone, ttl: config.recordTtl })
+
+    let { deletes } = plan
+    const pruneRatio =
+        plan.managedCount == 0 ? 0 : deletes.length / plan.managedCount
+    if (config.maxPruneRatio < pruneRatio) {
+        console.error(
+            `refusing to delete ${String(deletes.length)} of ${String(plan.managedCount)} managed records, over PORKBUN_MAX_PRUNE_RATIO`,
+        )
+        deletes = []
+    }
+
+    const summary = `${String(plan.creates.length)} to create, ${String(plan.edits.length)} to edit, ${String(deletes.length)} to delete, ${String(plan.managedCount)} managed`
+    if (config.dryRun) {
+        console.log(`[dry run] ${summary}`)
+        for (const r of plan.creates) {
+            console.log(`[dry run] create ${r.type} ${r.name} ${r.content}`)
+        }
+        for (const r of plan.edits) {
+            console.log(`[dry run] edit ${r.type} ${r.name} ${r.content}`)
+        }
+        for (const r of deletes) {
+            console.log(`[dry run] delete ${r.type} ${r.name} ${r.content}`)
+        }
+        return
+    }
+    console.log(summary)
+
+    // additions first, so a rename never leaves the name unresolvable
+    for (const r of plan.creates) {
+        const label = `create ${r.type} ${r.name} ${r.content}`
+        // eslint-disable-next-line no-await-in-loop
+        await write(label, () =>
+            createRecord(
+                { ...r, domain: zone.domain, ttl: config.recordTtl },
+                auth,
+            ),
+        )
+    }
+    for (const r of plan.edits) {
+        const label = `edit ${r.type} ${r.name} ${r.content}`
+        // eslint-disable-next-line no-await-in-loop
+        await write(label, () =>
+            editRecord(
+                { ...r, domain: zone.domain, ttl: config.recordTtl },
+                auth,
+            ),
+        )
+    }
+    for (const r of deletes) {
+        const label = `delete ${r.type} ${r.name} ${r.content}`
+        // eslint-disable-next-line no-await-in-loop
+        await write(label, () =>
+            deleteRecord({ domain: zone.domain, id: r.id }, auth),
+        )
+    }
+}
